@@ -185,7 +185,23 @@ function setStatus(text) {
 }
 
 // ====== Core scraping ======
+const PROXY = 'http://localhost:8765';
+
 async function fetchPage(url) {
+  // Try direct fetch first (works when served via http://, fails on file://)
+  try {
+    return await doFetch(url);
+  } catch (e) {
+    // CORS blocked? fall back to local proxy
+    if (e instanceof TypeError && e.message.includes('Failed to fetch')) {
+      log('直接请求被拦截，通过本地代理中转...', 'info');
+      return await doFetch(`${PROXY}/fetch?url=${encodeURIComponent(url)}`);
+    }
+    throw e;
+  }
+}
+
+async function doFetch(url) {
   const timeoutSec = parseInt(document.getElementById('timeoutSec').value) || 30;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutSec * 1000);

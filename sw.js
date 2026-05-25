@@ -1,4 +1,4 @@
-const CACHE_NAME = 'salary-calc-v2';
+const CACHE_NAME = 'salary-calc-v3';
 const STATIC_ASSETS = [
   './',
   './manifest.json',

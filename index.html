@@ -9,6 +9,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>工资计算器</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
 /* ====== DESIGN TOKENS ====== */
 :root {
@@ -614,6 +615,7 @@ async function refreshHolidays(){
 // ============================================================
 function getHourlyRate() {
   const s = getMonthlySettings();
+  if(s.hourlyRateMode==='manual') return parseFloat(s.manualHourlyRate)||0;
   const base = parseFloat(s.baseSalary)||0;
   return base<=0?0:base/HOURLY_DAYS/WORK_HOURS;
 }
@@ -646,7 +648,7 @@ function getPeriodOvertimeSummary() {
 
 function getMonthlySettings() {
   const key=monthKey(state.year,state.month);
-  if(!state.monthlySettings[key]) state.monthlySettings[key]={baseSalary:'',performance:'',housingFund:'',socialInsurance:'',additions:[],deductions:[],actualPaid:''};
+  if(!state.monthlySettings[key]) state.monthlySettings[key]={baseSalary:'',performance:'',housingFund:'',socialInsurance:'',additions:[],deductions:[],actualPaid:'',hourlyRateMode:'auto',manualHourlyRate:''};
   return state.monthlySettings[key];
 }
 
@@ -1033,108 +1035,197 @@ function applyModuleBackground(moduleId) {
 }
 
 // ============================================================
-//  SECTION: IMPORT / EXPORT
+//  SECTION: EXCEL EXPORT
 // ============================================================
 function exportData() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if(!raw){ toast('没有数据可导出'); return; }
-  const data = JSON.parse(raw);
-  const json = JSON.stringify(data, null, 2);
-  const blob = new Blob([json], {type:'application/json'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
+  if(typeof XLSX==='undefined'){ toast('正在加载Excel组件...'); return; }
+  const wb = XLSX.utils.book_new();
+  for(let m=1;m<=12;m++){
+    const key = monthKey(state.year,m);
+    const ms = state.monthlySettings[key];
+    const {start,end} = getPeriodRange(state.year,m);
+    const hr = getHourlyRateForExport(m);
+    const rows = [['工资计算器', `${state.year}年${m}月`], [], ['工资周期', fmt(start), '~', fmt(end)], []];
+    rows.push(['=== 薪资设置 ===']);
+    if(ms){
+      rows.push(['底薪', ms.baseSalary||'']);
+      if((ms.hourlyRateMode||'auto')==='manual') rows.push(['手动时薪', ms.manualHourlyRate||'']);
+      rows.push(['时薪', hr.toFixed(2)]);
+      rows.push(['绩效/奖金', ms.performance||'']);
+      rows.push(['公积金', ms.housingFund||'']);
+      rows.push(['社保', ms.socialInsurance||'']);
+      if(ms.additions&&ms.additions.length>0){ rows.push(['加项']); for(const it of ms.additions) rows.push(['  '+ (it.name||'未命名'), it.amount||'']); }
+      if(ms.deductions&&ms.deductions.length>0){ rows.push(['扣项']); for(const it of ms.deductions) rows.push(['  '+ (it.name||'未命名'), it.amount||'']); }
+      const bd = calculateMonthlyTotalForMonth(state.year,m);
+      rows.push(['应发合计', bd.total.toFixed(2)]);
+      rows.push(['实际发放', ms.actualPaid||'']);
+    }
+    rows.push([]);
+    rows.push(['=== 加班记录 ===']);
+    rows.push(['日期', '星期', '类型', '加班小时', '加班费']);
+    for(let d=new Date(start);d<=end;d.setDate(d.getDate()+1)){
+      const ds = fmt(d);
+      const weekdays = ['','一','二','三','四','五','六','日'];
+      const type = getEffectiveDayType(ds);
+      const rec = state.overtimeRecords[ds];
+      const hours = rec?(parseFloat(rec.hours)||0):0;
+      const pay = hours>0&&hr>0?hr*hours*(MULTIPLIERS[type]||0):0;
+      rows.push([ds, '周'+weekdays[getDayOfWeek(d)], getTypeLabel(type), hours||'', pay>0?pay.toFixed(2):'']);
+    }
+    const summary = getPeriodOvertimeSummaryForMonth(m,hr);
+    rows.push([]);
+    rows.push(['加班总小时', summary.totalHours.toFixed(1)]);
+    rows.push(['工作日加班费', summary.workdayPay.toFixed(2)]);
+    rows.push(['周末加班费', summary.weekendPay.toFixed(2)]);
+    rows.push(['节假日加班费', summary.holidayPay.toFixed(2)]);
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{wch:16},{wch:8},{wch:10},{wch:10},{wch:12}];
+    XLSX.utils.book_append_sheet(wb, ws, m+'月');
+  }
   const now = new Date();
-  a.download = `salary-data-${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}.json`;
-  a.href = url; document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  toast('数据已导出');
+  const fname = `salary-${state.year}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}.xlsx`;
+  XLSX.writeFile(wb, fname);
+  toast('Excel已导出');
 }
 
+function getHourlyRateForExport(month) {
+  const key = monthKey(state.year,month);
+  const s = state.monthlySettings[key];
+  if(s && s.hourlyRateMode==='manual') return parseFloat(s.manualHourlyRate)||0;
+  const base = s?parseFloat(s.baseSalary)||0:0;
+  return base<=0?0:base/HOURLY_DAYS/WORK_HOURS;
+}
+
+function getPeriodOvertimeSummaryForMonth(month, hr) {
+  const {start,end} = getPeriodRange(state.year,month);
+  let totalHours=0,workdayPay=0,weekendPay=0,holidayPay=0;
+  for(let d=new Date(start);d<=end;d.setDate(d.getDate()+1)){
+    const ds=fmt(d);
+    const r=state.overtimeRecords[ds];
+    const hours=r?(parseFloat(r.hours)||0):0;
+    totalHours+=hours;
+    const type=getEffectiveDayType(ds);
+    const m=MULTIPLIERS[type]||0;
+    const pay=hr*hours*m;
+    if(type==='workday') workdayPay+=pay;
+    else if(type==='weekend') weekendPay+=pay;
+    else if(type==='holiday') holidayPay+=pay;
+  }
+  return {totalHours,workdayPay,weekendPay,holidayPay,totalOtPay:workdayPay+weekendPay+holidayPay};
+}
+
+// ============================================================
+//  SECTION: EXCEL IMPORT (Overtime Hours)
+// ============================================================
 function importData() {
+  if(typeof XLSX==='undefined'){ toast('正在加载Excel组件，请稍后再试...'); return; }
   const input = document.createElement('input');
-  input.type = 'file'; input.accept = '.json';
+  input.type = 'file'; input.accept = '.xlsx,.xls';
   input.onchange = function(e) {
     const file = e.target.files[0];
     if(!file) return;
     const reader = new FileReader();
     reader.onload = function(re) {
       try {
-        const data = JSON.parse(re.target.result);
-        if(!validateImportData(data)){ toast('文件格式不正确'); return; }
-        showImportModal(data);
-      } catch(err){ toast('文件解析失败'); }
+        const wb = XLSX.read(re.target.result, {type:'array'});
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(sheet, {header:1, defval:''});
+        if(!data||data.length===0){ toast('表格为空'); return; }
+        const records = parseOvertimeFromSheet(data);
+        if(Object.keys(records).length===0){ toast('未识别到日期和加班小时数据'); return; }
+        showImportOvertimeModal(records);
+      } catch(err){ toast('文件解析失败：'+err.message); }
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
   };
   input.click();
 }
 
-function validateImportData(data) {
-  if(typeof data!=='object'||data===null) return false;
-  return ['overtimeRecords','monthlySettings','holidays','year'].some(k=>k in data);
+function parseOvertimeFromSheet(rows) {
+  // Strategy: find the column with dates (yyyy-mm-dd or yyyy/mm/dd) and the adjacent column with numbers (hours)
+  const datePattern = /^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/;
+  let dateCol = -1, hourCol = -1, bestScore = 0;
+  const header = rows[0]||[];
+
+  for(let col=0;col<header.length;col++){
+    const cell = String(header[col]||'').trim();
+    if(!cell) continue;
+    // Check if header looks like a date indicator
+    if(/日|date|时间/i.test(cell)){
+      dateCol = col;
+    }
+    if(/小时|加班|hour|ot|工时/i.test(cell)){
+      hourCol = col;
+    }
+  }
+
+  // If headers not found, scan data rows to detect
+  if(dateCol<0||hourCol<0){
+    const candidates = [];
+    for(let col=0;col<Math.min(header.length||10,10);col++){
+      let dateCount=0,numCount=0;
+      for(let r=1;r<Math.min(rows.length,50);r++){
+        const v = String(rows[r]?.[col]??'').trim();
+        if(datePattern.test(v)) dateCount++;
+        else if(/^\d+(\.\d+)?$/.test(v) && parseFloat(v)>0 && parseFloat(v)<=24) numCount++;
+      }
+      candidates.push({col, dateCount, numCount, score: dateCount+numCount*0.5});
+    }
+    candidates.sort((a,b)=>b.score-a.score);
+    if(dateCol<0&&candidates.length>0){ dateCol = candidates[0].col; candidates.splice(0,1); }
+    if(hourCol<0&&candidates.length>0){ hourCol = candidates[0].col; }
+  }
+
+  if(dateCol<0||hourCol<0) return {};
+
+  const records = {};
+  for(let r=0;r<rows.length;r++){
+    const rawDate = String(rows[r]?.[dateCol]??'').trim();
+    const match = rawDate.match(datePattern);
+    if(!match) continue;
+    const ds = rawDate.replace(/\//g,'-');
+    const hours = parseFloat(rows[r]?.[hourCol])||0;
+    if(hours<=0) continue;
+    records[ds] = {hours, manualType: null};
+  }
+  return records;
 }
 
-function showImportModal(data) {
-  const stats = [];
-  const mCount = Object.keys(data.monthlySettings||{}).length;
-  const oCount = Object.keys(data.overtimeRecords||{}).length;
-  const hCount = Object.keys(data.holidays||{}).length;
-  if(mCount) stats.push(`${mCount} 个月薪资设置`);
-  if(oCount) stats.push(`${oCount} 条加班记录`);
-  if(hCount) stats.push(`${hCount} 条节假日数据`);
-  if(data.moduleOrder) stats.push('模块布局与主题设置');
-
+function showImportOvertimeModal(records) {
+  const count = Object.keys(records).length;
   const overlay = document.getElementById('modalOverlay');
   overlay.innerHTML = `<div class="modal">
-    <h3>导入数据</h3>
+    <h3>导入加班工时</h3>
     <div class="modal-info">
-      即将导入以下数据：<br>
-      ${stats.map(s=>'&nbsp;&nbsp;- '+s).join('<br>')}
-    </div>
-    <div style="margin-bottom:var(--space-lg)">
-      <label><input type="radio" name="importMode" value="merge" checked> 合并 - 保留现有数据，仅添加新数据</label>
-      <label><input type="radio" name="importMode" value="replace"> 替换 - 清除现有数据，使用导入数据</label>
+      识别到 ${count} 条加班记录，将合并到现有数据中（不覆盖已有记录）。
     </div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal()">取消</button>
-      <button class="btn-confirm" id="confirmImportBtn">确认导入</button>
+      <button class="btn-confirm" id="confirmOvertimeImportBtn">确认导入</button>
     </div>
   </div>`;
   overlay.style.display = 'flex';
 
-  document.getElementById('confirmImportBtn').onclick = function() {
-    const mode = document.querySelector('input[name="importMode"]:checked').value;
-    applyImport(data, mode);
+  document.getElementById('confirmOvertimeImportBtn').onclick = function() {
+    applyOvertimeImport(records);
     closeModal();
   };
 }
 
+function applyOvertimeImport(records) {
+  for(const [ds, rec] of Object.entries(records)){
+    // Don't overwrite existing overtime records
+    if(state.overtimeRecords[ds] && state.overtimeRecords[ds].hours) continue;
+    if(!state.overtimeRecords[ds]) state.overtimeRecords[ds] = {hours:0,manualType:null};
+    state.overtimeRecords[ds].hours = rec.hours;
+  }
+  saveState(); renderAll();
+  toast('加班工时导入成功');
+}
+
 function closeModal() {
   document.getElementById('modalOverlay').style.display = 'none';
-}
-
-function applyImport(data, mode) {
-  if(mode==='replace'){
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } else {
-    const existing = JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}');
-    const merged = deepMerge(existing, data);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-  }
-  loadState(); renderAll();
-  toast('数据导入成功');
-}
-
-function deepMerge(base, incoming) {
-  const result = {...base};
-  for(const key of Object.keys(incoming)){
-    if(!(key in result)){ result[key]=incoming[key]; continue; }
-    const bv=result[key], iv=incoming[key];
-    if(typeof bv==='object'&&bv!==null&&!Array.isArray(bv)&&typeof iv==='object'&&iv!==null&&!Array.isArray(iv)){
-      result[key]={...iv,...bv};
-    }
-  }
-  return result;
 }
 
 // ============================================================
@@ -1173,7 +1264,7 @@ function renderModules() {
 
   // Salary body
   const salBody = document.getElementById('body-salary');
-  if(salBody) salBody.innerHTML = `<div class="form-group"><label>底薪（元）</label><input type="number" id="baseSalary" placeholder="输入底薪" step="0.01" oninput="onSalaryInput()"></div><div class="hourly-rate" id="hourlyRate">时薪：¥0.00/小时（底薪÷21.75÷8）</div><div class="auto-calc"><span>加班费（自动计算）</span><span class="auto-value" id="autoOtPay">¥0.00</span></div><div class="form-group"><label>绩效 / 奖金</label><input type="number" id="performance" placeholder="输入绩效" step="0.01" oninput="onSalaryInput()"></div><div class="form-group"><label>公积金（个人缴纳）</label><input type="number" id="housingFund" placeholder="输入公积金" step="0.01" oninput="onSalaryInput()"></div><div class="form-group"><label>社保（个人缴纳）</label><input type="number" id="socialInsurance" placeholder="输入社保" step="0.01" oninput="onSalaryInput()"></div><div class="dynamic-items" id="otherAdditions"></div><button class="add-item-btn" onclick="addCustomItem('addition')">+ 添加加项</button><div class="dynamic-items" id="otherDeductions" style="margin-top:10px"></div><button class="add-item-btn" onclick="addCustomItem('deduction')">+ 添加扣项</button><div class="total-box"><div class="total-label">本月应发合计</div><div class="total-value" id="monthlyTotal">¥0.00</div><div class="total-detail" id="totalDetail"></div></div><div class="actual-paid"><label>实际发放工资（手动填写）</label><input type="number" id="actualPaid" placeholder="输入实际发放金额" step="0.01" oninput="onActualPaidChange()"></div><div class="btn-row"><button class="btn btn-outline" onclick="showIncomeDetail()">查看收入明细</button><button class="btn btn-primary" onclick="saveAll()">保存本月数据</button></div>`;
+  if(salBody) salBody.innerHTML = `<div class="form-group"><label>底薪（元）</label><input type="number" id="baseSalary" placeholder="输入底薪" step="0.01" oninput="onSalaryInput()"></div><div class="hourly-rate" id="hourlyRate" style="margin-bottom:6px">时薪：¥0.00/小时（底薪÷21.75÷8）</div><div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;font-size:13px"><label style="display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--text-secondary)"><input type="radio" name="hourlyRateMode" value="auto" checked onchange="onHourlyRateModeChange()"> 底薪计算</label><label style="display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--text-secondary)"><input type="radio" name="hourlyRateMode" value="manual" onchange="onHourlyRateModeChange()"> 手动填写</label><input type="number" id="manualHourlyRate" placeholder="手动时薪" step="0.01" oninput="onHourlyRateModeChange()" style="width:100px;padding:4px 8px;border:1px solid var(--border-color);border-radius:4px;font-size:13px;display:none"></div><div class="auto-calc"><span>加班费（自动计算）</span><span class="auto-value" id="autoOtPay">¥0.00</span></div><div class="form-group"><label>绩效 / 奖金</label><input type="number" id="performance" placeholder="输入绩效" step="0.01" oninput="onSalaryInput()"></div><div class="form-group"><label>公积金（个人缴纳）</label><input type="number" id="housingFund" placeholder="输入公积金" step="0.01" oninput="onSalaryInput()"></div><div class="form-group"><label>社保（个人缴纳）</label><input type="number" id="socialInsurance" placeholder="输入社保" step="0.01" oninput="onSalaryInput()"></div><div class="dynamic-items" id="otherAdditions"></div><button class="add-item-btn" onclick="addCustomItem('addition')">+ 添加加项</button><div class="dynamic-items" id="otherDeductions" style="margin-top:10px"></div><button class="add-item-btn" onclick="addCustomItem('deduction')">+ 添加扣项</button><div class="total-box"><div class="total-label">本月应发合计</div><div class="total-value" id="monthlyTotal">¥0.00</div><div class="total-detail" id="totalDetail"></div></div><div class="actual-paid"><label>实际发放工资（手动填写）</label><input type="number" id="actualPaid" placeholder="输入实际发放金额" step="0.01" oninput="onActualPaidChange()"></div><div class="btn-row"><button class="btn btn-outline" onclick="showIncomeDetail()">查看收入明细</button><button class="btn btn-primary" onclick="saveAll()">保存本月数据</button></div>`;
 
   // Annual body
   const annBody = document.getElementById('body-annual');
@@ -1432,6 +1523,11 @@ function renderSalaryPanel() {
   document.getElementById('housingFund').value = settings.housingFund;
   document.getElementById('socialInsurance').value = settings.socialInsurance;
   document.getElementById('actualPaid').value = settings.actualPaid;
+  const mode = settings.hourlyRateMode||'auto';
+  const modeRadio = document.querySelector(`input[name="hourlyRateMode"][value="${mode}"]`);
+  if(modeRadio) modeRadio.checked = true;
+  const manEl = document.getElementById('manualHourlyRate');
+  if(manEl) { manEl.value = settings.manualHourlyRate||''; manEl.style.display = mode==='manual'?'':'none'; }
   updateTotalsDisplay();
   renderDynamicItems('otherAdditions', settings.additions, 'addition');
   renderDynamicItems('otherDeductions', settings.deductions, 'deduction');
@@ -1443,7 +1539,16 @@ function updateTotalsDisplay() {
   const breakdown = calculateMonthlyTotal();
 
   const hrEl = document.getElementById('hourlyRate');
-  if(hrEl) hrEl.textContent = hourlyRate>0?`时薪：${fmtMoney(hourlyRate)}/小时（底薪÷21.75÷8）`:'时薪：¥0.00/小时（请输入底薪）';
+  const settings = getMonthlySettings();
+  const mode = settings.hourlyRateMode||'auto';
+  if(hrEl) {
+    if(hourlyRate>0) {
+      const label = mode==='manual'?'手动填写':'底薪÷21.75÷8';
+      hrEl.textContent = `时薪：${fmtMoney(hourlyRate)}/小时（${label}）`;
+    } else {
+      hrEl.textContent = mode==='manual'?'时薪：¥0.00/小时（请输入时薪）':'时薪：¥0.00/小时（请输入底薪）';
+    }
+  }
 
   const aoEl = document.getElementById('autoOtPay');
   if(aoEl) aoEl.textContent = fmtMoney(totalOtPay);
@@ -1600,6 +1705,19 @@ function onSalaryInput() {
   settings.performance = document.getElementById('performance').value;
   settings.housingFund = document.getElementById('housingFund').value;
   settings.socialInsurance = document.getElementById('socialInsurance').value;
+  renderCalendar();
+  updateTotalsDisplay();
+  renderAnnualSummary();
+  saveState();
+}
+
+function onHourlyRateModeChange() {
+  const settings = getMonthlySettings();
+  const mode = document.querySelector('input[name="hourlyRateMode"]:checked');
+  settings.hourlyRateMode = mode?mode.value:'auto';
+  settings.manualHourlyRate = document.getElementById('manualHourlyRate').value;
+  const manEl = document.getElementById('manualHourlyRate');
+  if(manEl) manEl.style.display = settings.hourlyRateMode==='manual'?'':'none';
   renderCalendar();
   updateTotalsDisplay();
   renderAnnualSummary();

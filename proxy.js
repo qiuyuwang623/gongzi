@@ -7,7 +7,9 @@ const path = require('path');
 
 const PORT = 8765;
 
-function httpGet(url, referer, cookie) {
+function httpGet(url, referer, cookie, redirectCount) {
+  redirectCount = redirectCount || 0;
+  if (redirectCount > 5) return Promise.reject(new Error('Too many redirects'));
   return new Promise((resolve, reject) => {
     const client = url.startsWith('https') ? https : http;
     const headers = {
@@ -18,6 +20,15 @@ function httpGet(url, referer, cookie) {
     if (cookie) headers['Cookie'] = cookie;
     const opts = { headers, timeout: 30000 };
     client.get(url, opts, (res) => {
+      // Follow redirects
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        let redirectUrl = res.headers.location;
+        if (redirectUrl.startsWith('/')) {
+          const u = new URL(url);
+          redirectUrl = u.origin + redirectUrl;
+        }
+        return httpGet(redirectUrl, referer, cookie, redirectCount + 1).then(resolve, reject);
+      }
       const chunks = [];
       res.on('data', c => chunks.push(c));
       res.on('end', () => {

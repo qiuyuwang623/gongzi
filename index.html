@@ -624,10 +624,11 @@ function getHourlyRate() {
 function getOvertimePayForDate(dateStr, hourlyRate) {
   const r = state.overtimeRecords[dateStr];
   const hours = r?(parseFloat(r.hours)||0):0;
-  if(hours<=0||hourlyRate<=0) return {hours:0,pay:0,type:null};
+  if(hours<=0) return {hours:0,pay:0,type:null};
   const type = getEffectiveDayType(dateStr);
   const multiplier = MULTIPLIERS[type];
-  return {hours,pay:hourlyRate*hours*multiplier,type};
+  const pay = hourlyRate>0?hourlyRate*hours*multiplier:0;
+  return {hours,pay,type};
 }
 
 function getPeriodOvertimeSummary() {

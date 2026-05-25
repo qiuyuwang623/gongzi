@@ -1,16 +1,15 @@
-const CACHE_NAME = 'salary-calc-v1';
-const ASSETS = [
+const CACHE_NAME = 'salary-calc-v2';
+const STATIC_ASSETS = [
   './',
-  './index.html',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
 ];
 
-// Install: pre-cache all app shell assets
+// Install: pre-cache static assets (not HTML, which changes often)
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS))
+    caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_ASSETS))
   );
   self.skipWaiting();
 });
@@ -25,25 +24,24 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// Fetch: cache-first for app shell, network-first for API
+// Fetch: network-first for HTML, cache-first for static, network-first for API
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
+  const isHTML = event.request.destination === 'document' || url.pathname.endsWith('.html') || url.pathname === '/' || url.pathname === '';
 
   // API calls: network-first, fallback to cache
   if (url.hostname === 'timor.tech') {
-    event.respondWith(
-      fetch(event.request)
-        .then(response => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
-          return response;
-        })
-        .catch(() => caches.match(event.request))
-    );
+    event.respondWith(networkFirst(event.request));
     return;
   }
 
-  // App shell: cache-first, fallback to network
+  // HTML: network-first (always get latest), fallback to cache for offline
+  if (isHTML) {
+    event.respondWith(networkFirst(event.request));
+    return;
+  }
+
+  // Static assets: cache-first
   event.respondWith(
     caches.match(event.request).then(cached =>
       cached || fetch(event.request).then(response => {
@@ -54,3 +52,13 @@ self.addEventListener('fetch', event => {
     )
   );
 });
+
+function networkFirst(request) {
+  return fetch(request)
+    .then(response => {
+      const clone = response.clone();
+      caches.open(CACHE_NAME).then(cache => cache.put(request, clone));
+      return response;
+    })
+    .catch(() => caches.match(request));
+}

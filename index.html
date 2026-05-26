@@ -674,9 +674,7 @@ function getHourlyRate() {
   const s = getMonthlySettings();
   if(s.hourlyRateMode==='manual') return parseFloat(s.manualHourlyRate)||0;
   const base = getEffectiveBaseSalary(state.year, state.month);
-  const allowance = getEffectiveAllowance(state.year, state.month);
-  const total = base + allowance;
-  return total<=0?0:total/HOURLY_DAYS/WORK_HOURS;
+  return base<=0?0:base/HOURLY_DAYS/WORK_HOURS;
 }
 
 function getOvertimePayForDate(dateStr, hourlyRate) {
@@ -741,9 +739,10 @@ function calculateMonthlyTotalForMonth(year,month){
   const s=state.monthlySettings[key];
   if(!s) return {base:0,totalOtPay:0,total:0};
   const base=getEffectiveBaseSalary(year,month)+getEffectiveAllowance(year,month);
+  const hrBase=getEffectiveBaseSalary(year,month);
   const perf=parseFloat(s.performance)||0;
   const hf=parseFloat(s.housingFund)||0,si=parseFloat(s.socialInsurance)||0;
-  const hr=base>0?base/HOURLY_DAYS/WORK_HOURS:0;
+  const hr=hrBase>0?hrBase/HOURLY_DAYS/WORK_HOURS:0;
   const {start,end}=getPeriodRange(year,month);
   let otp=0;
   for(let d=new Date(start);d<=end;d.setDate(d.getDate()+1)){
@@ -1350,9 +1349,7 @@ function getHourlyRateForExport(month) {
   const s = state.monthlySettings[key];
   if(s && s.hourlyRateMode==='manual') return parseFloat(s.manualHourlyRate)||0;
   const base = getEffectiveBaseSalary(state.year, month);
-  const allowance = getEffectiveAllowance(state.year, month);
-  const total = base + allowance;
-  return total<=0?0:total/HOURLY_DAYS/WORK_HOURS;
+  return base<=0?0:base/HOURLY_DAYS/WORK_HOURS;
 }
 
 function getPeriodOvertimeSummaryForMonth(month, hr) {
@@ -1827,11 +1824,10 @@ function updateTotalsDisplay() {
   const mode = settings.hourlyRateMode||'auto';
   if(hrEl) {
     if(hourlyRate>0) {
-      const hasAllowance = (parseFloat(state.allowance)||0) > 0 || Object.keys(state.monthlyAllowanceChanges||{}).length > 0;
-      const label = mode==='manual'?'手动填写':hasAllowance?'（底薪+补贴）÷21.75÷8':'底薪÷21.75÷8';
+      const label = mode==='manual'?'手动填写':'底薪÷21.75÷8';
       hrEl.textContent = `时薪：${fmtMoney(hourlyRate)}/小时（${label}）`;
     } else {
-      hrEl.textContent = mode==='manual'?'时薪：¥0.00/小时（请输入时薪）':'时薪：¥0.00/小时（请输入底薪和补贴）';
+      hrEl.textContent = mode==='manual'?'时薪：¥0.00/小时（请输入时薪）':'时薪：¥0.00/小时（请输入底薪）';
     }
   }
 

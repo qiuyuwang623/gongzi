@@ -213,7 +213,8 @@ body{font-family:var(--font-family);background:var(--bg-page);color:var(--text-p
 .module-card.dragging{opacity:0.5;transform:scale(0.97)}
 .module-card.drag-over{box-shadow:0 0 0 3px var(--module-accent),var(--shadow-lg)}
 .module-card.drag-over::after{content:'';position:absolute;inset:0;border-radius:var(--radius-lg);z-index:5;pointer-events:none}
-.module-card-header{display:flex;align-items:center;justify-content:space-between;padding:var(--space-lg) var(--space-xl);border-bottom:1px solid var(--border-light);gap:var(--space-md);position:relative;z-index:1}
+.module-card-header{display:flex;align-items:center;justify-content:space-between;padding:var(--space-lg) var(--space-xl);border-bottom:1px solid var(--border-light);gap:var(--space-md);position:relative;z-index:1;cursor:grab}
+.module-card-header:active{cursor:grabbing}
 .module-card-header .module-title{font-size:var(--font-size-lg);font-weight:600;display:flex;align-items:center;gap:var(--space-sm)}
 .module-card-header .module-period{font-size:var(--font-size-sm);color:var(--text-muted);font-weight:400}
 .module-card-header .header-actions{display:flex;align-items:center;gap:var(--space-sm)}
@@ -493,6 +494,7 @@ let state = {
   customPageTheme: null,
   moduleBackgroundColors: {},
   moduleOpacities: {},
+  backgroundImage: null,
 };
 
 // ============================================================
@@ -509,6 +511,7 @@ function saveState() {
       pageTheme: state.pageTheme, customPageTheme: state.customPageTheme,
       moduleBackgroundColors: state.moduleBackgroundColors,
       moduleOpacities: state.moduleOpacities,
+      backgroundImage: state.backgroundImage,
     }));
   } catch(e) {}
 }
@@ -531,6 +534,7 @@ function loadState() {
       state.customPageTheme = s.customPageTheme || null;
       state.moduleBackgroundColors = s.moduleBackgroundColors || {};
       state.moduleOpacities = s.moduleOpacities || {};
+      state.backgroundImage = s.backgroundImage || null;
     }
   } catch(e) {}
 }
@@ -794,6 +798,65 @@ function setPageTheme(id) {
   saveState();
 }
 
+function applyBackgroundImage() {
+  if(state.backgroundImage) {
+    document.body.style.backgroundImage = `url(${state.backgroundImage})`;
+    document.body.style.backgroundSize = 'cover';
+    document.body.style.backgroundPosition = 'center';
+    document.body.style.backgroundAttachment = 'fixed';
+  } else {
+    document.body.style.backgroundImage = '';
+    document.body.style.backgroundSize = '';
+    document.body.style.backgroundPosition = '';
+    document.body.style.backgroundAttachment = '';
+  }
+}
+
+function clearBackgroundImage() {
+  state.backgroundImage = null;
+  applyBackgroundImage();
+  saveState();
+  toast('背景图片已清除');
+}
+
+function triggerBackgroundUpload() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = 'image/*';
+  input.onchange = function(e) {
+    const file = e.target.files[0];
+    if(!file) return;
+    compressImageForBackground(file).then(dataUrl => {
+      state.backgroundImage = dataUrl;
+      applyBackgroundImage();
+      saveState();
+      toast('背景图片已应用');
+    });
+  };
+  input.click();
+}
+
+function compressImageForBackground(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = function(re) {
+      const img = new Image();
+      img.onload = function() {
+        const canvas = document.createElement('canvas');
+        const maxW = 1920, maxH = 1080;
+        let w = img.width, h = img.height;
+        if(w > maxW) { h = h * maxW / w; w = maxW; }
+        if(h > maxH) { w = w * maxH / h; h = maxH; }
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.src = re.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function showPageThemePicker() {
   const overlay = document.getElementById('modalOverlay');
   let html = '<div class="modal" style="max-width:520px"><h3>选择页面主题</h3>';
@@ -810,7 +873,9 @@ function showPageThemePicker() {
     html += `</div><div style="padding:6px;font-size:13px;font-weight:500">${t.label}</div></div>`;
   }
   html += '</div>';
-  html += `<div onclick="triggerPhotoThemeUpload()" style="cursor:pointer;border:2px dashed var(--border-color);border-radius:10px;padding:14px;text-align:center;color:var(--text-secondary);font-size:14px;margin-bottom:10px">📷 上传照片自动取色</div>`;
+  html += `<div onclick="triggerPhotoThemeUpload()" style="cursor:pointer;border:2px dashed var(--border-color);border-radius:10px;padding:12px;text-align:center;color:var(--text-secondary);font-size:14px;margin-bottom:8px">🎨 上传照片提取主题色</div>`;
+  html += `<div onclick="triggerBackgroundUpload()" style="cursor:pointer;border:2px dashed var(--border-color);border-radius:10px;padding:12px;text-align:center;color:var(--text-secondary);font-size:14px;margin-bottom:8px">🖼️ 上传照片做页面背景</div>`;
+  if(state.backgroundImage) html += `<div onclick="clearBackgroundImage();closeModal()" style="cursor:pointer;text-align:center;color:#e74c3c;font-size:13px;padding:4px;margin-bottom:6px">✕ 清除背景图片</div>`;
   html += `<div class="modal-actions"><button class="btn-cancel" onclick="closeModal()">关闭</button></div></div>`;
   overlay.innerHTML = html;
   overlay.style.display = 'flex';
@@ -1368,8 +1433,8 @@ function renderModules() {
     const def = MODULE_DEFS.find(d=>d.id===moduleId);
     if(!def) continue;
     const spanAttr = def.span ? ' data-span="full"' : '';
-    html += `<div class="module-card" id="module-${moduleId}" data-module="${moduleId}"${spanAttr} draggable="true">`;
-    html += `<div class="module-card-header">`;
+    html += `<div class="module-card" id="module-${moduleId}" data-module="${moduleId}"${spanAttr}>`;
+    html += `<div class="module-card-header" draggable="true">`;
     html += `<div class="module-title">`;
     html += `<span class="drag-handle" title="拖拽排序">⋮⋮</span>`;
     html += def.title;
@@ -1415,15 +1480,16 @@ function initDragAndDrop() {
   const cards = container.querySelectorAll('.module-card');
 
   cards.forEach(card => {
-    card.addEventListener('dragstart', handleDragStart);
-    card.addEventListener('dragend', handleDragEnd);
+    // Drop target events on card
     card.addEventListener('dragover', handleDragOver);
     card.addEventListener('dragleave', handleDragLeave);
     card.addEventListener('drop', handleDrop);
 
-    // Touch support via module card header
+    // Drag source & touch events on header
     const header = card.querySelector('.module-card-header');
     if(header){
+      header.addEventListener('dragstart', handleDragStart);
+      header.addEventListener('dragend', handleDragEnd);
       header.addEventListener('touchstart', handleTouchStart, {passive:false});
       header.addEventListener('touchmove', handleTouchMove, {passive:false});
       header.addEventListener('touchend', handleTouchEnd);
@@ -1434,14 +1500,16 @@ function initDragAndDrop() {
 }
 
 function handleDragStart(e) {
-  dragData = this.getAttribute('data-module');
-  this.classList.add('dragging');
+  const card = this.closest('.module-card');
+  dragData = card.getAttribute('data-module');
+  card.classList.add('dragging');
   e.dataTransfer.effectAllowed = 'move';
   e.dataTransfer.setData('text/plain', dragData);
 }
 
 function handleDragEnd(e) {
-  this.classList.remove('dragging');
+  const card = this.closest('.module-card');
+  card.classList.remove('dragging');
   document.querySelectorAll('.module-card').forEach(c => c.classList.remove('drag-over'));
   dragData = null;
 }
@@ -1986,6 +2054,7 @@ async function ensureHolidays() {
 async function init() {
   loadState();
   applyPageTheme();
+  applyBackgroundImage();
   document.getElementById('yearDisplay').textContent = state.year;
   updateApiStatus('loaded','就绪');
   await ensureHolidays();

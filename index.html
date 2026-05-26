@@ -324,9 +324,15 @@ body{font-family:var(--font-family);background:var(--bg-page);color:var(--text-p
 /* ====== ANNUAL TABLE ====== */
 .annual-table{width:100%;border-collapse:collapse;font-size:var(--font-size-sm)}
 .annual-table th{background:var(--bg-card-alt);padding:10px 8px;text-align:center;border-bottom:2px solid #dee2e6;font-weight:600}
-.annual-table td{padding:8px;text-align:center;border-bottom:1px solid var(--border-light)}
-.annual-table tr:hover td{background:var(--bg-card-alt)}
+.annual-table td{padding:8px;text-align:center;border-bottom:1px solid var(--border-light);transition:background var(--transition-fast),transform var(--transition-fast)}
+.annual-table tbody tr{cursor:pointer;transition:transform var(--transition-fast),box-shadow var(--transition-fast)}
+.annual-table tbody tr:hover{transform:scale(1.01);box-shadow:0 2px 8px rgba(0,0,0,0.06)}
+.annual-table tbody tr:hover td{background:var(--module-accent-light)}
+.annual-table tbody tr:active{transform:scale(0.99)}
 .annual-table .total-row td{font-weight:700;border-top:2px solid var(--module-accent);background:var(--module-accent-light);font-size:var(--font-size-lg)}
+.annual-table .total-row{cursor:default}
+.annual-table .total-row:hover{transform:none;box-shadow:none}
+.annual-table .total-row:hover td{background:var(--module-accent-light)}
 .annual-table .highlight{color:var(--module-accent);font-weight:600}
 
 /* ====== TOAST ====== */
@@ -1812,7 +1818,7 @@ function renderAnnualSummary() {
   let html = `<thead><tr><th>月份</th><th>实际发放</th><th>底薪</th><th>加班费</th><th>应发合计</th></tr></thead><tbody>`;
   for(const m of months){
     const bd = m.settings?calculateMonthlyTotalForMonth(state.year,m.month):{total:0,base:0,totalOtPay:0};
-    html += `<tr style="cursor:pointer" onclick="selectMonth(${m.month})" title="跳转到${m.month}月"><td><strong style="color:var(--module-accent);text-decoration:underline">${m.month}月</strong></td><td class="highlight">${m.actualPaid>0?fmtMoney(m.actualPaid):'—'}</td><td>${bd.base>0?fmtMoney(bd.base):'—'}</td><td>${bd.totalOtPay>0?fmtMoney(bd.totalOtPay):'—'}</td><td>${bd.total!==0?fmtMoney(bd.total):'—'}</td></tr>`;
+    html += `<tr onclick="selectMonth(${m.month})" title="跳转到${m.month}月"><td><strong style="color:var(--module-accent);text-decoration:underline">${m.month}月</strong></td><td class="highlight">${m.actualPaid>0?fmtMoney(m.actualPaid):'—'}</td><td>${bd.base>0?fmtMoney(bd.base):'—'}</td><td>${bd.totalOtPay>0?fmtMoney(bd.totalOtPay):'—'}</td><td>${bd.total!==0?fmtMoney(bd.total):'—'}</td></tr>`;
   }
   html += `<tr class="total-row"><td>年度总计</td><td class="highlight">${fmtMoney(total)}</td><td></td><td></td><td></td></tr></tbody>`;
 

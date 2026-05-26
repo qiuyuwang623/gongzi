@@ -500,6 +500,8 @@ let state = {
   backgroundImage: null,
   baseSalary: '',
   monthlyRaises: {},
+  allowance: '',
+  monthlyAllowanceChanges: {},
 };
 
 // ============================================================
@@ -519,6 +521,8 @@ function saveState() {
       backgroundImage: state.backgroundImage,
       baseSalary: state.baseSalary,
       monthlyRaises: state.monthlyRaises,
+      allowance: state.allowance,
+      monthlyAllowanceChanges: state.monthlyAllowanceChanges,
     }));
   } catch(e) {}
 }
@@ -544,6 +548,8 @@ function loadState() {
       state.backgroundImage = s.backgroundImage || null;
       state.baseSalary = s.baseSalary || '';
       state.monthlyRaises = s.monthlyRaises || {};
+      state.allowance = s.allowance || '';
+      state.monthlyAllowanceChanges = s.monthlyAllowanceChanges || {};
       // Migrate: if no global baseSalary, scan existing monthlySettings
       if(!state.baseSalary){
         for(let m=1;m<=12;m++){
@@ -575,6 +581,21 @@ function getEffectiveBaseSalary(year, month) {
 function getRaiseForMonth(year, month) {
   const key = monthKey(year, month);
   return parseFloat(state.monthlyRaises[key]) || 0;
+}
+
+function getEffectiveAllowance(year, month) {
+  const base = parseFloat(state.allowance) || 0;
+  let totalChange = 0;
+  const currentKey = monthKey(year, month);
+  for (const [key, amount] of Object.entries(state.monthlyAllowanceChanges || {})) {
+    if (key <= currentKey) totalChange += parseFloat(amount) || 0;
+  }
+  return base + totalChange;
+}
+
+function getAllowanceChangeForMonth(year, month) {
+  const key = monthKey(year, month);
+  return parseFloat(state.monthlyAllowanceChanges[key]) || 0;
 }
 
 function getPeriodRange(year, month) {
@@ -653,7 +674,9 @@ function getHourlyRate() {
   const s = getMonthlySettings();
   if(s.hourlyRateMode==='manual') return parseFloat(s.manualHourlyRate)||0;
   const base = getEffectiveBaseSalary(state.year, state.month);
-  return base<=0?0:base/HOURLY_DAYS/WORK_HOURS;
+  const allowance = getEffectiveAllowance(state.year, state.month);
+  const total = base + allowance;
+  return total<=0?0:total/HOURLY_DAYS/WORK_HOURS;
 }
 
 function getOvertimePayForDate(dateStr, hourlyRate) {
@@ -691,7 +714,7 @@ function getMonthlySettings() {
 
 function calculateMonthlyTotal() {
   const s=getMonthlySettings();
-  const base=getEffectiveBaseSalary(state.year, state.month);
+  const base=getEffectiveBaseSalary(state.year, state.month)+getEffectiveAllowance(state.year, state.month);
   const perf=parseFloat(s.performance)||0;
   const hf=parseFloat(s.housingFund)||0,si=parseFloat(s.socialInsurance)||0;
   const {totalOtPay}=getPeriodOvertimeSummary();
@@ -717,7 +740,7 @@ function calculateMonthlyTotalForMonth(year,month){
   const key=monthKey(year,month);
   const s=state.monthlySettings[key];
   if(!s) return {base:0,totalOtPay:0,total:0};
-  const base=getEffectiveBaseSalary(year,month);
+  const base=getEffectiveBaseSalary(year,month)+getEffectiveAllowance(year,month);
   const perf=parseFloat(s.performance)||0;
   const hf=parseFloat(s.housingFund)||0,si=parseFloat(s.socialInsurance)||0;
   const hr=base>0?base/HOURLY_DAYS/WORK_HOURS:0;
@@ -1213,6 +1236,8 @@ function doExportMonth() {
   rows.push(['=== 薪资设置 ===']);
   if(ms){
     rows.push(['底薪', getEffectiveBaseSalary(state.year, m).toFixed(2)]);
+    const effAllowance = getEffectiveAllowance(state.year, m);
+    if (effAllowance > 0) rows.push(['补贴', effAllowance.toFixed(2)]);
     if((ms.hourlyRateMode||'auto')==='manual') rows.push(['手动时薪', ms.manualHourlyRate||'']);
     rows.push(['时薪', hr.toFixed(2)]);
     rows.push(['绩效/奖金', ms.performance||'']);
@@ -1265,6 +1290,8 @@ function doExportYear() {
     rows.push(['=== 薪资设置 ===']);
     if(ms){
       rows.push(['底薪', getEffectiveBaseSalary(state.year, m).toFixed(2)]);
+      const effAllowance2 = getEffectiveAllowance(state.year, m);
+      if (effAllowance2 > 0) rows.push(['补贴', effAllowance2.toFixed(2)]);
       if((ms.hourlyRateMode||'auto')==='manual') rows.push(['手动时薪', ms.manualHourlyRate||'']);
       rows.push(['时薪', hr.toFixed(2)]);
       rows.push(['绩效/奖金', ms.performance||'']);
@@ -1323,7 +1350,9 @@ function getHourlyRateForExport(month) {
   const s = state.monthlySettings[key];
   if(s && s.hourlyRateMode==='manual') return parseFloat(s.manualHourlyRate)||0;
   const base = getEffectiveBaseSalary(state.year, month);
-  return base<=0?0:base/HOURLY_DAYS/WORK_HOURS;
+  const allowance = getEffectiveAllowance(state.year, month);
+  const total = base + allowance;
+  return total<=0?0:total/HOURLY_DAYS/WORK_HOURS;
 }
 
 function getPeriodOvertimeSummaryForMonth(month, hr) {
@@ -1493,7 +1522,7 @@ function renderModules() {
 
   // Salary body
   const salBody = document.getElementById('body-salary');
-  if(salBody) salBody.innerHTML = `<div class="form-group"><label>底薪（元）</label><input type="number" id="baseSalary" placeholder="输入底薪" step="0.01" oninput="onGlobalBaseSalaryChange()"><div style="font-size:12px;color:var(--text-muted);margin-top:2px">输入一次后每月自动同步</div></div><div id="raiseSection" style="margin-bottom:10px"></div><div class="hourly-rate" id="hourlyRate" style="margin-bottom:6px">时薪：¥0.00/小时（底薪÷21.75÷8）</div><div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;font-size:13px"><label style="display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--text-secondary)"><input type="radio" name="hourlyRateMode" value="auto" checked onchange="onHourlyRateModeChange()"> 底薪计算</label><label style="display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--text-secondary)"><input type="radio" name="hourlyRateMode" value="manual" onchange="onHourlyRateModeChange()"> 手动填写</label><input type="number" id="manualHourlyRate" placeholder="手动时薪" step="0.01" oninput="onHourlyRateModeChange()" style="width:100px;padding:4px 8px;border:1px solid var(--border-color);border-radius:4px;font-size:13px;display:none"></div><div class="auto-calc"><span>加班费（自动计算）</span><span class="auto-value" id="autoOtPay">¥0.00</span></div><div class="form-group"><label>绩效 / 奖金</label><input type="number" id="performance" placeholder="输入绩效" step="0.01" oninput="onSalaryInput()"></div><div class="form-group"><label>公积金（个人缴纳）</label><input type="number" id="housingFund" placeholder="输入公积金" step="0.01" oninput="onSalaryInput()"></div><div class="form-group"><label>社保（个人缴纳）</label><input type="number" id="socialInsurance" placeholder="输入社保" step="0.01" oninput="onSalaryInput()"></div><div class="dynamic-items" id="otherAdditions"></div><button class="add-item-btn" onclick="addCustomItem('addition')">+ 添加加项</button><div class="dynamic-items" id="otherDeductions" style="margin-top:10px"></div><button class="add-item-btn" onclick="addCustomItem('deduction')">+ 添加扣项</button><div class="total-box"><div class="total-label">本月应发合计</div><div class="total-value" id="monthlyTotal">¥0.00</div><div class="total-detail" id="totalDetail"></div></div><div class="actual-paid"><label>实际发放工资（手动填写）</label><input type="number" id="actualPaid" placeholder="输入实际发放金额" step="0.01" oninput="onActualPaidChange()"></div><div class="btn-row"><button class="btn btn-outline" onclick="showIncomeDetail()">查看收入明细</button><button class="btn btn-primary" onclick="saveAll()">保存本月数据</button></div>`;
+  if(salBody) salBody.innerHTML = `<div class="form-row"><div class="form-group"><label>底薪（元）</label><input type="number" id="baseSalary" placeholder="输入底薪" step="0.01" oninput="onGlobalBaseSalaryChange()"><div style="font-size:12px;color:var(--text-muted);margin-top:2px">输入一次后每月自动同步</div></div><div class="form-group"><label>补贴（元）</label><input type="number" id="allowance" placeholder="输入补贴" step="0.01" oninput="onGlobalAllowanceChange()"><div style="font-size:12px;color:var(--text-muted);margin-top:2px">输入一次后每月自动同步</div></div></div><div id="raiseSection" style="margin-bottom:10px"></div><div id="allowanceSection" style="margin-bottom:10px"></div><div class="hourly-rate" id="hourlyRate" style="margin-bottom:6px">时薪：¥0.00/小时（底薪÷21.75÷8）</div><div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;font-size:13px"><label style="display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--text-secondary)"><input type="radio" name="hourlyRateMode" value="auto" checked onchange="onHourlyRateModeChange()"> 底薪计算</label><label style="display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--text-secondary)"><input type="radio" name="hourlyRateMode" value="manual" onchange="onHourlyRateModeChange()"> 手动填写</label><input type="number" id="manualHourlyRate" placeholder="手动时薪" step="0.01" oninput="onHourlyRateModeChange()" style="width:100px;padding:4px 8px;border:1px solid var(--border-color);border-radius:4px;font-size:13px;display:none"></div><div class="auto-calc"><span>加班费（自动计算）</span><span class="auto-value" id="autoOtPay">¥0.00</span></div><div class="form-group"><label>绩效 / 奖金</label><input type="number" id="performance" placeholder="输入绩效" step="0.01" oninput="onSalaryInput()"></div><div class="form-group"><label>公积金（个人缴纳）</label><input type="number" id="housingFund" placeholder="输入公积金" step="0.01" oninput="onSalaryInput()"></div><div class="form-group"><label>社保（个人缴纳）</label><input type="number" id="socialInsurance" placeholder="输入社保" step="0.01" oninput="onSalaryInput()"></div><div class="dynamic-items" id="otherAdditions"></div><button class="add-item-btn" onclick="addCustomItem('addition')">+ 添加加项</button><div class="dynamic-items" id="otherDeductions" style="margin-top:10px"></div><button class="add-item-btn" onclick="addCustomItem('deduction')">+ 添加扣项</button><div class="total-box"><div class="total-label">本月应发合计</div><div class="total-value" id="monthlyTotal">¥0.00</div><div class="total-detail" id="totalDetail"></div></div><div class="actual-paid"><label>实际发放工资（手动填写）</label><input type="number" id="actualPaid" placeholder="输入实际发放金额" step="0.01" oninput="onActualPaidChange()"></div><div class="btn-row"><button class="btn btn-outline" onclick="showIncomeDetail()">查看收入明细</button><button class="btn btn-primary" onclick="saveAll()">保存本月数据</button></div>`;
 
   // Annual body
   const annBody = document.getElementById('body-annual');
@@ -1770,6 +1799,8 @@ function renderOtSummary() {
 function renderSalaryPanel() {
   const settings = getMonthlySettings();
   document.getElementById('baseSalary').value = state.baseSalary;
+  const allowanceEl = document.getElementById('allowance');
+  if (allowanceEl) allowanceEl.value = state.allowance;
   document.getElementById('performance').value = settings.performance;
   document.getElementById('housingFund').value = settings.housingFund;
   document.getElementById('socialInsurance').value = settings.socialInsurance;
@@ -1780,6 +1811,7 @@ function renderSalaryPanel() {
   const manEl = document.getElementById('manualHourlyRate');
   if(manEl) { manEl.value = settings.manualHourlyRate||''; manEl.style.display = mode==='manual'?'':'none'; }
   renderRaiseSection();
+  renderAllowanceSection();
   updateTotalsDisplay();
   renderDynamicItems('otherAdditions', settings.additions, 'addition');
   renderDynamicItems('otherDeductions', settings.deductions, 'deduction');
@@ -1795,10 +1827,11 @@ function updateTotalsDisplay() {
   const mode = settings.hourlyRateMode||'auto';
   if(hrEl) {
     if(hourlyRate>0) {
-      const label = mode==='manual'?'手动填写':'底薪÷21.75÷8';
+      const hasAllowance = (parseFloat(state.allowance)||0) > 0 || Object.keys(state.monthlyAllowanceChanges||{}).length > 0;
+      const label = mode==='manual'?'手动填写':hasAllowance?'（底薪+补贴）÷21.75÷8':'底薪÷21.75÷8';
       hrEl.textContent = `时薪：${fmtMoney(hourlyRate)}/小时（${label}）`;
     } else {
-      hrEl.textContent = mode==='manual'?'时薪：¥0.00/小时（请输入时薪）':'时薪：¥0.00/小时（请输入底薪）';
+      hrEl.textContent = mode==='manual'?'时薪：¥0.00/小时（请输入时薪）':'时薪：¥0.00/小时（请输入底薪和补贴）';
     }
   }
 
@@ -1809,7 +1842,7 @@ function updateTotalsDisplay() {
   if(mtEl) mtEl.textContent = fmtMoney(breakdown.total);
 
   const parts = [];
-  if(breakdown.base) parts.push(`底薪 ${fmtMoney(breakdown.base)}`);
+  if(breakdown.base) parts.push(`基本工资 ${fmtMoney(breakdown.base)}`);
   if(breakdown.perf) parts.push(`绩效 ${fmtMoney(breakdown.perf)}`);
   if(breakdown.totalOtPay) parts.push(`加班 ${fmtMoney(breakdown.totalOtPay)}`);
   if(breakdown.additionsTotal) parts.push(`加项 ${fmtMoney(breakdown.additionsTotal)}`);
@@ -2030,6 +2063,72 @@ function removeRaise() {
   saveState();
 }
 
+function onGlobalAllowanceChange() {
+  state.allowance = document.getElementById('allowance').value;
+  renderCalendar();
+  updateTotalsDisplay();
+  renderAnnualSummary();
+  saveState();
+}
+
+function renderAllowanceSection() {
+  const section = document.getElementById('allowanceSection');
+  if (!section) return;
+  const change = getAllowanceChangeForMonth(state.year, state.month);
+  const effectiveAllowance = getEffectiveAllowance(state.year, state.month);
+  if (change > 0) {
+    section.innerHTML = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="font-size:13px;color:var(--text-secondary)">当月补贴：<strong style="color:var(--module-accent)">${fmtMoney(effectiveAllowance)}</strong>（含调整 ${fmtMoney(change)}）</span><button onclick="editAllowanceChange()" style="padding:3px 10px;font-size:12px;background:var(--bg-card-alt);color:var(--text-secondary);border:1px solid var(--border-color);border-radius:4px;cursor:pointer">修改</button><button onclick="removeAllowanceChange()" style="padding:3px 10px;font-size:12px;background:var(--bg-card-alt);color:#e74c3c;border:1px solid var(--border-color);border-radius:4px;cursor:pointer">取消调整</button></div>`;
+  } else {
+    const totalChanged = effectiveAllowance - (parseFloat(state.allowance) || 0);
+    if (totalChanged > 0) {
+      section.innerHTML = `<div style="font-size:13px;color:var(--text-secondary);margin-bottom:4px">当月补贴：<strong style="color:var(--module-accent)">${fmtMoney(effectiveAllowance)}</strong>（补贴${fmtMoney(parseFloat(state.allowance)||0)} + 累计调整${fmtMoney(totalChanged)}）</div><button class="add-item-btn" onclick="toggleAllowanceInput()">+ 本月补贴调整</button>`;
+    } else {
+      section.innerHTML = `<button class="add-item-btn" onclick="toggleAllowanceInput()">+ 本月补贴调整</button>`;
+    }
+  }
+}
+
+function toggleAllowanceInput() {
+  const section = document.getElementById('allowanceSection');
+  if (!section) return;
+  section.innerHTML = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="font-size:13px;white-space:nowrap">本月补贴调整：</span><input type="number" id="allowanceChangeAmount" placeholder="调整金额" step="0.01" style="width:110px;padding:5px 8px;border:1px solid var(--module-accent);border-radius:4px;font-size:13px"><button onclick="applyAllowanceChange()" style="padding:5px 12px;background:var(--module-accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;white-space:nowrap">确认</button><button onclick="cancelAllowanceChange()" style="padding:5px 12px;background:var(--bg-card-alt);color:var(--text-secondary);border:1px solid var(--border-color);border-radius:4px;cursor:pointer;font-size:13px;white-space:nowrap">取消</button></div>`;
+  setTimeout(() => { const el = document.getElementById('allowanceChangeAmount'); if (el) el.focus(); }, 50);
+}
+
+function editAllowanceChange() {
+  const change = getAllowanceChangeForMonth(state.year, state.month);
+  const section = document.getElementById('allowanceSection');
+  if (!section) return;
+  section.innerHTML = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="font-size:13px;white-space:nowrap">修改补贴调整：</span><input type="number" id="allowanceChangeAmount" placeholder="调整金额" step="0.01" value="${change}" style="width:110px;padding:5px 8px;border:1px solid var(--module-accent);border-radius:4px;font-size:13px"><button onclick="applyAllowanceChange()" style="padding:5px 12px;background:var(--module-accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;white-space:nowrap">确认</button><button onclick="cancelAllowanceChange()" style="padding:5px 12px;background:var(--bg-card-alt);color:var(--text-secondary);border:1px solid var(--border-color);border-radius:4px;cursor:pointer;font-size:13px;white-space:nowrap">取消</button></div>`;
+  setTimeout(() => { const el = document.getElementById('allowanceChangeAmount'); if (el) { el.focus(); el.select(); } }, 50);
+}
+
+function applyAllowanceChange() {
+  const amount = parseFloat(document.getElementById('allowanceChangeAmount').value);
+  if (!amount || amount <= 0) { alert('请输入有效的调整金额'); return; }
+  const key = monthKey(state.year, state.month);
+  state.monthlyAllowanceChanges[key] = String(amount);
+  renderAllowanceSection();
+  updateTotalsDisplay();
+  renderCalendar();
+  renderAnnualSummary();
+  saveState();
+}
+
+function cancelAllowanceChange() {
+  renderAllowanceSection();
+}
+
+function removeAllowanceChange() {
+  const key = monthKey(state.year, state.month);
+  delete state.monthlyAllowanceChanges[key];
+  renderAllowanceSection();
+  updateTotalsDisplay();
+  renderCalendar();
+  renderAnnualSummary();
+  saveState();
+}
+
 function onHourlyRateModeChange() {
   const settings = getMonthlySettings();
   const mode = document.querySelector('input[name="hourlyRateMode"]:checked');
@@ -2078,7 +2177,11 @@ function showIncomeDetail() {
   const breakdown = calculateMonthlyTotal();
   const hourlyRate = getHourlyRate();
   let detail = `=== ${state.year}年${state.month}月 收入明细 ===\n\n`;
-  detail += `底薪：${fmtMoney(breakdown.base)}\n时薪：${fmtMoney(hourlyRate)}/小时\n绩效/奖金：${fmtMoney(breakdown.perf)}\n\n`;
+  const baseOnly = getEffectiveBaseSalary(state.year, state.month);
+  const allowanceOnly = getEffectiveAllowance(state.year, state.month);
+  detail += `底薪：${fmtMoney(baseOnly)}\n`;
+  if (allowanceOnly > 0) detail += `补贴：${fmtMoney(allowanceOnly)}\n`;
+  detail += `时薪：${fmtMoney(hourlyRate)}/小时\n绩效/奖金：${fmtMoney(breakdown.perf)}\n\n`;
   detail += `加班费合计：${fmtMoney(breakdown.totalOtPay)}\n`;
   const summary = getPeriodOvertimeSummary();
   detail += `  - 工作日加班 (×1.5)：${fmtMoney(summary.workdayPay)}\n  - 周末加班 (×2.0)：${fmtMoney(summary.weekendPay)}\n  - 节假日加班 (×3.0)：${fmtMoney(summary.holidayPay)}\n  - 加班总小时：${summary.totalHours.toFixed(1)}h\n\n`;
@@ -2094,6 +2197,8 @@ function showIncomeDetail() {
 function saveAll() {
   const settings = getMonthlySettings();
   state.baseSalary = document.getElementById('baseSalary').value;
+  const allowanceEl2 = document.getElementById('allowance');
+  if (allowanceEl2) state.allowance = allowanceEl2.value;
   settings.performance = document.getElementById('performance').value;
   settings.housingFund = document.getElementById('housingFund').value;
   settings.socialInsurance = document.getElementById('socialInsurance').value;

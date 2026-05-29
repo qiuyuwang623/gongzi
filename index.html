@@ -502,6 +502,9 @@ let state = {
   moduleBackgroundColors: {},
   moduleOpacities: {},
   backgroundImage: null,
+  periodStartDay: 26,
+  periodEndDay: 25,
+  monthlyPeriodOverrides: {},
   baseSalary: '',
   monthlyRaises: {},
   allowance: '',
@@ -523,6 +526,9 @@ function saveState() {
       moduleBackgroundColors: state.moduleBackgroundColors,
       moduleOpacities: state.moduleOpacities,
       backgroundImage: state.backgroundImage,
+      periodStartDay: state.periodStartDay,
+      periodEndDay: state.periodEndDay,
+      monthlyPeriodOverrides: state.monthlyPeriodOverrides,
       baseSalary: state.baseSalary,
       monthlyRaises: state.monthlyRaises,
       allowance: state.allowance,
@@ -550,6 +556,9 @@ function loadState() {
       state.moduleBackgroundColors = s.moduleBackgroundColors || {};
       state.moduleOpacities = s.moduleOpacities || {};
       state.backgroundImage = s.backgroundImage || null;
+      state.periodStartDay = s.periodStartDay || 26;
+      state.periodEndDay = s.periodEndDay || 25;
+      state.monthlyPeriodOverrides = s.monthlyPeriodOverrides || {};
       state.baseSalary = s.baseSalary || '';
       state.monthlyRaises = s.monthlyRaises || {};
       state.allowance = s.allowance || '';
@@ -602,10 +611,20 @@ function getAllowanceChangeForMonth(year, month) {
   return parseFloat(state.monthlyAllowanceChanges[key]) || 0;
 }
 
+function getPeriodDays(year, month) {
+  const key = monthKey(year, month);
+  const override = state.monthlyPeriodOverrides[key];
+  if (override) return override;
+  return { startDay: state.periodStartDay, endDay: state.periodEndDay };
+}
+
 function getPeriodRange(year, month) {
-  let pm=month-1, py=year;
-  if(pm===0){pm=12;py=year-1;}
-  return { start: new Date(py,pm-1,26), end: new Date(year,month-1,25) };
+  const { startDay, endDay } = getPeriodDays(year, month);
+  let pm = month - 1, py = year;
+  if (pm === 0) { pm = 12; py = year - 1; }
+  const startMonth = startDay > endDay ? pm : month;
+  const startYear = startDay > endDay ? py : year;
+  return { start: new Date(startYear, startMonth - 1, startDay), end: new Date(year, month - 1, endDay) };
 }
 
 function getDayOfWeek(date) { const d=date.getDay(); return d===0?7:d; }

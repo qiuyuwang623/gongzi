@@ -2315,9 +2315,15 @@ function showIncomeDetail() {
   if(breakdown.additions.length>0){ detail += `加项：\n`; for(const it of breakdown.additions) detail += `  + ${it.name||'未命名'}：${fmtMoney(parseFloat(it.amount)||0)}\n`; detail += `加项合计：${fmtMoney(breakdown.additionsTotal)}\n\n`; }
   detail += `公积金：${breakdown.hf>0?'-':''}${fmtMoney(breakdown.hf)}\n社保：${breakdown.si>0?'-':''}${fmtMoney(breakdown.si)}\n`;
   if(breakdown.deductions.length>0){ detail += `扣项：\n`; for(const it of breakdown.deductions) detail += `  - ${it.name||'未命名'}：${fmtMoney(parseFloat(it.amount)||0)}\n`; }
+  if(breakdown.tax) detail += `\n个税（简化估算）：-${fmtMoney(breakdown.tax)}\n`;
   detail += `\n本月应发合计：${fmtMoney(breakdown.total)}\n`;
   const settings = getMonthlySettings();
-  if(settings.actualPaid) detail += `实际发放：${fmtMoney(parseFloat(settings.actualPaid)||0)}\n`;
+  const actualPaidVal = parseFloat(settings.actualPaid)||0;
+  const perfVal = parseFloat(settings.performance)||0;
+  detail += `\n--- 实际发放明细 ---\n`;
+  detail += `实际发放薪资：${actualPaidVal>0?fmtMoney(actualPaidVal):'未填写'}\n`;
+  detail += `绩效/奖金：${fmtMoney(perfVal)}\n`;
+  detail += `实际发放合计：${fmtMoney(actualPaidVal+perfVal)}\n`;
   alert(detail);
 }
 
